@@ -116,10 +116,9 @@ public class TaskExecutorService {
         Main.TaskGroup taskGroup1 = new Main.TaskGroup(UUID.randomUUID());
         Main.TaskGroup taskGroup2 = new Main.TaskGroup(UUID.randomUUID());
 
-        // Example Task Group 1
         Main.Task<String> task1 = new Main.Task<>(
                 UUID.randomUUID(),
-                taskGroup1, // Group 1
+                taskGroup1,
                 Main.TaskType.WRITE,
                 () -> {
 //                    Thread.sleep(1000);
@@ -130,7 +129,7 @@ public class TaskExecutorService {
 
         Main.Task<String> task2 = new Main.Task<>(
                 UUID.randomUUID(),
-                taskGroup2, // Group 1
+                taskGroup2,
                 Main.TaskType.READ,
                 () -> {
                     System.out.println("Task 2 completed");
@@ -138,10 +137,10 @@ public class TaskExecutorService {
                 }
         );
 
-        // Example Task Group 2
+
         Main.Task<String> task3 = new Main.Task<>(
                 UUID.randomUUID(),
-                taskGroup2, // Group 2
+                taskGroup2,
                 Main.TaskType.READ,
                 () -> {
                     System.out.println("Task 3 completed");
@@ -151,10 +150,9 @@ public class TaskExecutorService {
 
         Main.Task<String> task4 = new Main.Task<>(
                 UUID.randomUUID(),
-                taskGroup1, // Group 2
+                taskGroup1,
                 Main.TaskType.WRITE,
                 () -> {
-//                    Thread.sleep(400); // Simulate task execution time
                     System.out.println("Task 4 completed");
                     return "Task 4 completed";
                 }
