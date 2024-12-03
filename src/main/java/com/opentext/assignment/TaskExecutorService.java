@@ -7,6 +7,7 @@ import java.util.concurrent.atomic.AtomicBoolean;
 
 public class TaskExecutorService implements Main.TaskExecutor {
     private final int maxConcurrency;
+    private final int maxQueueSize;
     private final Map<UUID, Queue<Main.Task<?>>> taskGroupQueues;
     private final Map<UUID, TaskGroupExecutionType> taskGroupRunningStatus;
 
@@ -20,12 +21,13 @@ public class TaskExecutorService implements Main.TaskExecutor {
         RUNNING
     }
 
-    public TaskExecutorService(int maxConcurrency) {
+    public TaskExecutorService(int maxConcurrency, int maxQueueSize) {
         this.maxConcurrency = maxConcurrency;
         this.taskGroupQueues = new HashMap<>();
         this.taskGroupRunningStatus = new HashMap<>();
         this.taskFuture = new HashMap<>();
         this.isShutdown = new AtomicBoolean(false);
+        this.maxQueueSize = maxQueueSize;
     }
 
     @Override
@@ -35,7 +37,12 @@ public class TaskExecutorService implements Main.TaskExecutor {
 
         synchronized (this) {
 
-            taskGroupQueues.computeIfAbsent(task.taskGroup().groupUUID(), k -> new LinkedList<>()).add(task);
+            taskGroupQueues.computeIfAbsent(task.taskGroup().groupUUID(), k -> new LinkedList<>());
+            if (taskGroupQueues.get(task.taskGroup().groupUUID()).size() >= maxQueueSize) {
+                future.completeExceptionally(new RejectedExecutionException("Task queue size exceeded for task : " + task.taskUUID() + " - group: " + task.taskGroup().groupUUID()));
+                return future;
+            }
+            taskGroupQueues.get(task.taskGroup().groupUUID()).add(task);
 
             taskGroupRunningStatus.putIfAbsent(task.taskGroup().groupUUID(), TaskGroupExecutionType.READY);
 
@@ -57,11 +64,7 @@ public class TaskExecutorService implements Main.TaskExecutor {
     }
 
     private void processTaskGroup(UUID taskGroupUUID) {
-        while (true) { // Iteratively process tasks in the group
-
-            if (isShutdown.get()) {
-                throw new RejectedExecutionException("TaskExecutorService is shut down");
-            }
+        while (true) {
 
             Main.Task<?> task;
 
@@ -69,7 +72,6 @@ public class TaskExecutorService implements Main.TaskExecutor {
                 Queue<Main.Task<?>> taskQueue = taskGroupQueues.get(taskGroupUUID);
 
                 if (taskQueue == null || taskQueue.isEmpty() || isShutdown.get()) {
-                    // Mark the group as ready and exit if no tasks remain
                     taskGroupRunningStatus.put(taskGroupUUID, TaskGroupExecutionType.READY);
                     return;
                 }
@@ -79,9 +81,6 @@ public class TaskExecutorService implements Main.TaskExecutor {
                     try {
                         System.out.println("Waiting tasks : " + taskQueue.peek());
                         wait(); // Wait until a thread becomes available
-                        if (isShutdown.get()) {
-                            throw new RejectedExecutionException("TaskExecutorService is shut down");
-                        }
                     } catch (InterruptedException e) {
                         Thread.currentThread().interrupt();
                         taskGroupRunningStatus.put(taskGroupUUID, TaskGroupExecutionType.READY);
@@ -135,8 +134,8 @@ public class TaskExecutorService implements Main.TaskExecutor {
 
     public void shutDownNow(List<Future<?>> futures) {
         if (isShutdown.compareAndSet(false, true)) {
+            Thread.currentThread().interrupt();
             shutdown();
-            System.out.println("TaskExecutorService has been shut down now.");
             for (Future<?> runningTask : futures) {
                 runningTask.cancel(true); // Interrupt actively running tasks
             }
@@ -163,15 +162,16 @@ public class TaskExecutorService implements Main.TaskExecutor {
 //        testScenario6(); //Verifying tasks delay with two groups
 //        testScenario7(); //verify task creation with null task group
 //        testScenario8(); //verify 2 task creation with null task group
-//        testScenario9(); //verify 2 task creation with null task group
-        testScenario10(); //Executing tasks concurrently with four task Groups and maxConcurrency as 2
+//        testScenario9(); //shutting down before task completion
+//        testScenario10(); //Executing tasks concurrently with four task Groups and maxConcurrency as 2
+        testScenario11(); //Eexcuting tasks with 1 task group and maxconcurrency as 2 and max Queuesize as 2
 
     }
 
     private static void testScenario1() throws ExecutionException, InterruptedException {
 
         System.out.println("Test Scenario 1 - Executing one task");
-        TaskExecutorService taskExecutor = new TaskExecutorService(2);
+        TaskExecutorService taskExecutor = new TaskExecutorService(2, 5);
 
         Main.TaskGroup taskGroup1 = new Main.TaskGroup(UUID.randomUUID());
 
@@ -205,7 +205,7 @@ public class TaskExecutorService implements Main.TaskExecutor {
     private static void testScenario2() throws ExecutionException, InterruptedException {
 
         System.out.println("Test Scenario 2 - Executing tasks concurrently with two task Groups and maxConcurrency as 2");
-        TaskExecutorService taskExecutor = new TaskExecutorService(2);
+        TaskExecutorService taskExecutor = new TaskExecutorService(2, 5);
 
         Main.TaskGroup taskGroup1 = new Main.TaskGroup(UUID.randomUUID());
         Main.TaskGroup taskGroup2 = new Main.TaskGroup(UUID.randomUUID());
@@ -281,7 +281,7 @@ public class TaskExecutorService implements Main.TaskExecutor {
 
         System.out.println("Test Scenario 3 - Executing tasks concurrently with three task Groups " +
                 "and maxConcurrency as 2");
-        TaskExecutorService taskExecutor = new TaskExecutorService(2);
+        TaskExecutorService taskExecutor = new TaskExecutorService(2, 5);
 
         Main.TaskGroup taskGroup1 = new Main.TaskGroup(UUID.randomUUID());
         Main.TaskGroup taskGroup2 = new Main.TaskGroup(UUID.randomUUID());
@@ -357,7 +357,7 @@ public class TaskExecutorService implements Main.TaskExecutor {
     private static void testScenario4() throws ExecutionException, InterruptedException {
 
         System.out.println("Test Scenario 4 - Verufying execution order in task group");
-        TaskExecutorService taskExecutor = new TaskExecutorService(2);
+        TaskExecutorService taskExecutor = new TaskExecutorService(2, 5);
 
         Main.TaskGroup taskGroup1 = new Main.TaskGroup(UUID.randomUUID());
 
@@ -431,7 +431,7 @@ public class TaskExecutorService implements Main.TaskExecutor {
     private static void testScenario5() throws ExecutionException, InterruptedException {
 
         System.out.println("Test Scenario  - Verify tasks in one go with two task Groups and maxConcurrency as 2 ");
-        TaskExecutorService taskExecutor = new TaskExecutorService(2);
+        TaskExecutorService taskExecutor = new TaskExecutorService(2, 5);
 
         Main.TaskGroup taskGroup1 = new Main.TaskGroup(UUID.randomUUID());
         Main.TaskGroup taskGroup2 = new Main.TaskGroup(UUID.randomUUID());
@@ -504,7 +504,7 @@ public class TaskExecutorService implements Main.TaskExecutor {
     private static void testScenario6() throws ExecutionException, InterruptedException {
 
         System.out.println("Test Scenario  - Verify task Delay with two groups");
-        TaskExecutorService taskExecutor = new TaskExecutorService(2);
+        TaskExecutorService taskExecutor = new TaskExecutorService(2, 5);
 
         Main.TaskGroup taskGroup1 = new Main.TaskGroup(UUID.randomUUID());
         Main.TaskGroup taskGroup2 = new Main.TaskGroup(UUID.randomUUID());
@@ -579,7 +579,7 @@ public class TaskExecutorService implements Main.TaskExecutor {
     private static void testScenario7() throws ExecutionException, InterruptedException {
 
         System.out.println("Test Scenario 7 - Executing task with null task group");
-        TaskExecutorService taskExecutor = new TaskExecutorService(2);
+        TaskExecutorService taskExecutor = new TaskExecutorService(2, 5);
 
         Main.Task<String> task1 = new Main.Task<>(
                 UUID.randomUUID(),
@@ -611,7 +611,7 @@ public class TaskExecutorService implements Main.TaskExecutor {
     private static void testScenario8() throws ExecutionException, InterruptedException {
 
         System.out.println("Test Scenario 8 - Executing 2 tasks with null task group");
-        TaskExecutorService taskExecutor = new TaskExecutorService(2);
+        TaskExecutorService taskExecutor = new TaskExecutorService(2, 5);
 
         Main.Task<String> task1 = new Main.Task<>(
                 UUID.randomUUID(),
@@ -657,7 +657,7 @@ public class TaskExecutorService implements Main.TaskExecutor {
 
         System.out.println("Test Scenario 9 - Executing tasks task executor " +
                 "getting shutdown before completion of task execution");
-        TaskExecutorService taskExecutor = new TaskExecutorService(2);
+        TaskExecutorService taskExecutor = new TaskExecutorService(2, 5);
         Main.TaskGroup taskGroup1 = new Main.TaskGroup(UUID.randomUUID());
         Main.TaskGroup taskGroup2 = new Main.TaskGroup(UUID.randomUUID());
 
@@ -666,6 +666,8 @@ public class TaskExecutorService implements Main.TaskExecutor {
                 taskGroup1,
                 Main.TaskType.WRITE,
                 () -> {
+                    Thread.sleep(5000);
+                    System.out.println("Task 1");
                     return "Task 1 completed";
                 }
         );
@@ -675,6 +677,8 @@ public class TaskExecutorService implements Main.TaskExecutor {
                 taskGroup2,
                 Main.TaskType.WRITE,
                 () -> {
+                    Thread.sleep(100);
+                    System.out.println("Task 2");
                     return "Task 2 completed";
                 }
         );
@@ -685,6 +689,7 @@ public class TaskExecutorService implements Main.TaskExecutor {
                 Main.TaskType.WRITE,
                 () -> {
                     Thread.sleep(1000);
+                    System.out.println("Task 3");
                     return "Task 3 completed";
                 }
         );
@@ -713,7 +718,7 @@ public class TaskExecutorService implements Main.TaskExecutor {
 
         System.out.println("Test Scenario 10 - Executing tasks concurrently with four task Groups " +
                 "and maxConcurrency as 2");
-        TaskExecutorService taskExecutor = new TaskExecutorService(2);
+        TaskExecutorService taskExecutor = new TaskExecutorService(2, 5);
 
         Main.TaskGroup taskGroup1 = new Main.TaskGroup(UUID.randomUUID());
         Main.TaskGroup taskGroup2 = new Main.TaskGroup(UUID.randomUUID());
@@ -786,5 +791,79 @@ public class TaskExecutorService implements Main.TaskExecutor {
         taskExecutor.shutdown();
 
     }
+
+    private static void testScenario11() throws ExecutionException, InterruptedException {
+
+        System.out.println("Test Scenario 11 - Eexcuting tasks with 1 task group and maxconcurrency as 2 and max Queuesize as 2");
+        TaskExecutorService taskExecutor = new TaskExecutorService(2, 2);
+
+        Main.TaskGroup taskGroup1 = new Main.TaskGroup(UUID.randomUUID());
+
+        Main.Task<String> task1 = new Main.Task<>(
+                UUID.randomUUID(),
+                taskGroup1,
+                Main.TaskType.WRITE,
+                () -> {
+                    Thread.sleep(1000);
+                    return "Task 1 completed";
+                }
+        );
+
+        Main.Task<String> task2 = new Main.Task<>(
+                UUID.randomUUID(),
+                taskGroup1,
+                Main.TaskType.WRITE,
+                () -> {
+                    Thread.sleep(1000);
+                    return "Task 2 completed";
+                }
+        );
+
+        Main.Task<String> task3 = new Main.Task<>(
+                UUID.randomUUID(),
+                taskGroup1,
+                Main.TaskType.WRITE,
+                () -> {
+                    Thread.sleep(1000);
+                    return "Task 3 completed";
+                }
+        );
+
+        Main.Task<String> task4 = new Main.Task<>(
+                UUID.randomUUID(),
+                taskGroup1,
+                Main.TaskType.WRITE,
+                () -> {
+                    Thread.sleep(1000);
+                    return "Task 4 completed";
+                }
+        );
+
+        System.out.println("Task 1 : " + task1.taskUUID());
+        System.out.println("Task 2 : " + task2.taskUUID());
+        System.out.println("Task 3 : " + task3.taskUUID());
+        System.out.println("Task 4 : " + task4.taskUUID());
+
+        Future<String> future1 = taskExecutor.submitTask(task1);
+        Future<String> future2 = taskExecutor.submitTask(task2);
+        Future<String> future3 = taskExecutor.submitTask(task3);
+        Future<String> future4 = taskExecutor.submitTask(task4);
+
+        System.out.println("Task 1 : " + future1.get());
+        System.out.println("Task 2 : " + future2.get());
+        System.out.println("Task 3 : " + future3.get());
+        System.out.println("Task 4 : " + future4.get());
+
+        // Allow tasks to complete
+        try {
+            Thread.sleep(3000);
+        } catch (InterruptedException e) {
+            e.printStackTrace();
+        }
+
+        taskExecutor.shutdown();
+
+    }
+
 
 }
